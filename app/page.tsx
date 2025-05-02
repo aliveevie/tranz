@@ -14,20 +14,27 @@ import {
   Identity,
   EthBalance,
 } from '@coinbase/onchainkit/identity';
+import { useAccount } from 'wagmi';
 import EmailRegistration from './components/EmailRegistration';
 import TransactionMonitor from './components/TransactionMonitor';
 import BlockchainMonitor from './components/BlockchainMonitor';
 
 export default function App() {
+  const { isConnected } = useAccount();
+  
   return (
-    <div className="flex flex-col min-h-screen font-sans dark:bg-background dark:text-white bg-white text-black">
-      <header className="pt-4 px-4">
+    <div className="flex flex-col min-h-screen font-sans dark:bg-gray-900 dark:text-white bg-gray-50 text-gray-900">
+      {/* Hidden blockchain monitor component */}
+      <BlockchainMonitor />
+      
+      {/* Header with wallet connection */}
+      <header className="py-4 px-6 bg-white dark:bg-gray-800 shadow-md">
         <div className="flex justify-between items-center max-w-7xl mx-auto">
-          <h1 className="text-2xl font-bold">TranzAntions</h1>
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 text-transparent bg-clip-text">TranzAntions</h1>
           <div className="wallet-container">
             <Wallet>
               <ConnectWallet>
-                <Avatar className="h-6 w-6" />
+                <Avatar className="h-8 w-8 mr-2" />
                 <Name />
               </ConnectWallet>
               <WalletDropdown>
@@ -52,47 +59,68 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-grow p-4">
-        <div className="max-w-7xl mx-auto">
-          <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg p-8 mb-8 shadow-lg">
-            <h2 className="text-3xl font-bold mb-4">Transaction Alert System</h2>
-            <p className="text-xl mb-6">
-              Get real-time email notifications for all your wallet transactions on Base Sepolia.
-            </p>
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="bg-white/20 backdrop-blur-sm p-4 rounded-lg flex-1">
-                <h3 className="text-lg font-semibold mb-2">1. Connect Wallet</h3>
-                <p>Connect your wallet to get started with transaction monitoring</p>
-              </div>
-              <div className="bg-white/20 backdrop-blur-sm p-4 rounded-lg flex-1">
-                <h3 className="text-lg font-semibold mb-2">2. Register Email</h3>
-                <p>Register your email to receive transaction notifications</p>
-              </div>
-              <div className="bg-white/20 backdrop-blur-sm p-4 rounded-lg flex-1">
-                <h3 className="text-lg font-semibold mb-2">3. Get Notified</h3>
-                <p>Receive instant alerts for all your wallet transactions</p>
+      {/* Main content */}
+      <main className="flex-grow p-6">
+        <div className="max-w-7xl mx-auto space-y-8">
+          {/* Hero section */}
+          <section className="bg-gradient-to-br from-blue-600 to-purple-700 rounded-xl overflow-hidden shadow-xl">
+            <div className="p-8 md:p-12">
+              <div className="max-w-3xl">
+                <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">Transaction Alert System</h2>
+                <p className="text-xl text-white/90 mb-8">
+                  Get instant email notifications for all your wallet activities on Base Sepolia.
+                </p>
+                {!isConnected ? (
+                  <div className="inline-flex">
+                    <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg px-6 py-3 text-white">
+                      Connect your wallet to start monitoring transactions
+                    </div>
+                  </div>
+                ) : (
+                  <div className="inline-flex">
+                    <div className="bg-green-500/20 backdrop-blur-sm border border-green-500/30 rounded-lg px-6 py-3 text-white flex items-center">
+                      <svg className="w-5 h-5 mr-2 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      Wallet connected! Register your email below for alerts
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
+          </section>
           
-          <EmailRegistration />
-          <TransactionMonitor />
-          <BlockchainMonitor />
+          {/* Email registration */}
+          <section className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden">
+            <div className="p-6">
+              <h3 className="text-xl font-semibold mb-4 dark:text-white">Register for Transaction Alerts</h3>
+              <EmailRegistration />
+            </div>
+          </section>
+          
+          {/* Transaction history */}
+          <section className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden">
+            <div className="p-6">
+              <h3 className="text-xl font-semibold mb-4 dark:text-white">Your Transaction History</h3>
+              <TransactionMonitor />
+            </div>
+          </section>
         </div>
       </main>
       
-      <footer className="bg-gray-100 dark:bg-gray-800 py-6">
-        <div className="max-w-7xl mx-auto px-4">
+      {/* Footer */}
+      <footer className="py-6 px-6 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
+        <div className="max-w-7xl mx-auto">
           <div className="flex flex-col md:flex-row justify-between items-center">
-            <p className="text-gray-600 dark:text-gray-300 mb-4 md:mb-0">
-              © {new Date().getFullYear()} TranzAntions - Base Batch Africa
+            <p className="text-gray-600 dark:text-gray-400 mb-4 md:mb-0">
+              © {new Date().getFullYear()} TranzAntions | Base Batch Africa
             </p>
-            <div className="flex space-x-4">
+            <div className="flex space-x-6">
               <a 
                 href="https://docs.base.org/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 dark:text-blue-400 hover:underline"
+                className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"
               >
                 Base Docs
               </a>
@@ -100,7 +128,7 @@ export default function App() {
                 href="https://sepolia.basescan.org/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 dark:text-blue-400 hover:underline"
+                className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"
               >
                 Base Sepolia Explorer
               </a>

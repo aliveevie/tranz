@@ -11,11 +11,9 @@ export default function BlockchainMonitor() {
   useEffect(() => {
     if (!isConnected || !address) return;
 
-    // Create a websocket client for real-time updates
-    // Fallback to HTTP if WebSocket is not available
-    const transport = typeof window !== 'undefined' && window.WebSocket 
-      ? webSocket('wss://base-sepolia.g.alchemy.com/v2/demo')
-      : http('https://base-sepolia.g.alchemy.com/v2/demo');
+    // Use a reliable public RPC endpoint for Base Sepolia
+    // Note: Public endpoints typically don't support WebSocket, so we'll use HTTP
+    const transport = http('https://sepolia.base.org');
 
     const publicClient = createPublicClient({
       chain: baseSepolia,
