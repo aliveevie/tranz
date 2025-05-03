@@ -12,10 +12,6 @@ export function Providers(props: { children: ReactNode }) {
       config={{ 
         appearance: { 
           mode: 'auto',
-        },
-        transports: {
-          // Use Alchemy's public RPC for Base Sepolia
-          [baseSepolia.id]: 'https://base-sepolia.g.alchemy.com/v2/demo'
         }
       }}
     >
