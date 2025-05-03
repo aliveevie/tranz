@@ -1,0 +1,20 @@
+# Email Configuration for TranzAntions
+# Copy this file to .env.local and update with your actual SMTP credentials
+
+# Set to 'production' to use production email settings
+NODE_ENV=development
+
+# SMTP Configuration
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_SECURE=false
+EMAIL_USER=your-email@example.com
+EMAIL_PASS=your-password
+EMAIL_FROM="TranzAntions <notifications@tranzantions.com>"
+
+# For Gmail, you might use:
+# EMAIL_HOST=smtp.gmail.com
+# EMAIL_PORT=587
+# EMAIL_SECURE=false
+# EMAIL_USER=your-gmail@gmail.com
+# EMAIL_PASS=your-app-password  # Use an app password, not your regular Gmail password

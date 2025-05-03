@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { sendWelcomeEmail } from '../../utils/emailService';
 
 // In a real app, you would use a database to store user registrations
 // This is a simple in-memory store for demonstration purposes
@@ -60,16 +61,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Simulate sending a welcome email
-async function sendWelcomeEmail(email: string, walletAddress: string) {
-  // In a real application, you would use a service like SendGrid, Mailchimp, etc.
-  console.log(`Sending welcome email to ${email} for wallet ${walletAddress}`);
-  
-  // Simulate API call delay
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  return true;
-}
+// We're now using the email service from utils/emailService.ts
 
 // For demonstration purposes - in a real app, you would use a database
 export function GET() {
