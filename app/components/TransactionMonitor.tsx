@@ -74,10 +74,18 @@ export default function TransactionMonitor() {
         const startDateStr = startDate.toISOString();
         
         // Use our proxy API route to avoid CORS issues
-        const proxyUrl = `/api/blockscout/transactions?address=${address}&start_timestamp=${startDateStr}`;
+        const proxyUrl = `/api/blockscout/transactions?address=${address}&start_timestamp=${startDateStr}&_=${Date.now()}`;
         
-        // Fetch transactions from our proxy API
-        const response = await fetch(proxyUrl);
+        console.log(`Fetching transactions from ${proxyUrl}`);
+        
+        // Fetch transactions from our proxy API with cache busting
+        const response = await fetch(proxyUrl, {
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
+        });
         
         if (!response.ok) {
           throw new Error(`API request failed with status ${response.status}`);
@@ -89,7 +97,7 @@ export default function TransactionMonitor() {
           throw new Error('Invalid response format from API');
         }
         
-        console.log('Response data:', data);
+        console.log(`Received ${data.items.length} transactions from API`);
         
         // Transform Blockscout transactions to our format with proper error handling
         const userTransactions: Transaction[] = [];
@@ -106,6 +114,12 @@ export default function TransactionMonitor() {
               }
               
               const isSender = tx.from.hash.toLowerCase() === address.toLowerCase();
+              const isReceiver = tx.to && tx.to.hash && tx.to.hash.toLowerCase() === address.toLowerCase();
+              
+              if (!isSender && !isReceiver) {
+                console.warn('Skipping transaction not related to user:', tx.hash);
+                return;
+              }
               
               userTransactions.push({
                 hash: tx.hash,
@@ -119,6 +133,32 @@ export default function TransactionMonitor() {
                 status: tx.status || 'unknown',
                 fee: tx.fee && tx.fee.value ? tx.fee.value : '0'
               });
+              
+              // Send notification for this transaction if it's recent (last hour)
+              const isRecent = (Date.now() / 1000) - (tx.timestamp ? new Date(tx.timestamp).getTime() / 1000 : 0) < 3600;
+              if (isRecent) {
+                console.log(`Recent transaction detected: ${tx.hash}, sending notification...`);
+                // Notify about this transaction
+                fetch('/api/notify', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    walletAddress: address,
+                    transaction: {
+                      hash: tx.hash,
+                      from: tx.from.hash,
+                      to: tx.to ? tx.to.hash : null,
+                      value: tx.value || '0',
+                      blockNumber: tx.block || 0,
+                      timestamp: tx.timestamp ? new Date(tx.timestamp).getTime() : Date.now(),
+                      type: isSender ? 'sent' : 'received',
+                      status: 'confirmed',
+                    },
+                  }),
+                }).catch(err => console.error('Failed to send notification:', err));
+              }
             } catch (err) {
               console.error('Error processing transaction:', err, tx);
             }
@@ -130,6 +170,7 @@ export default function TransactionMonitor() {
         // Sort transactions by timestamp (newest first)
         userTransactions.sort((a, b) => b.timestamp - a.timestamp);
         
+        console.log(`Processed ${userTransactions.length} transactions for display`);
         setTransactions(userTransactions);
       } catch (err: any) {
         console.error('Error fetching transactions:', err);
@@ -139,10 +180,11 @@ export default function TransactionMonitor() {
       }
     };
 
+    // Fetch immediately on mount
     fetchTransactions();
     
-    // Set up polling every 30 seconds
-    const intervalId = setInterval(fetchTransactions, 30000);
+    // Set up more frequent polling (every 15 seconds) to catch new transactions faster
+    const intervalId = setInterval(fetchTransactions, 15000);
     
     return () => clearInterval(intervalId);
   }, [address, isConnected, timeRange]);

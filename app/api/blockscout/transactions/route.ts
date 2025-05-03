@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { registrations } from '../../register/route';
 
 // This is a proxy API route to avoid CORS issues with Blockscout API
 export async function GET(request: NextRequest) {
@@ -18,11 +19,24 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Check if this wallet is registered for notifications
+    const isRegistered = registrations.has(address.toLowerCase());
+    if (isRegistered) {
+      console.log(`Wallet ${address} is registered for notifications`);
+    } else {
+      console.log(`Wallet ${address} is NOT registered for notifications`);
+      // Auto-register the wallet if we have a Gmail account
+      if (process.env.GMAIL_ACCOUNT) {
+        registrations.set(address.toLowerCase(), process.env.GMAIL_ACCOUNT);
+        console.log(`Auto-registered wallet ${address} with email ${process.env.GMAIL_ACCOUNT}`);
+      }
+    }
+
     // Blockscout API key
     const apiKey = '38dbd14b-5e82-4d6a-ba78-a4a396cc9c13';
     
-    // Build the Blockscout API URL
-    let blockscoutUrl = `https://base-sepolia.blockscout.com/api/v2/addresses/${address}/transactions?filter=all`;
+    // Build the Blockscout API URL with cache busting
+    let blockscoutUrl = `https://base-sepolia.blockscout.com/api/v2/addresses/${address}/transactions?filter=all&cachebust=${Date.now()}`;
     
     if (startTimestamp) {
       blockscoutUrl += `&start_timestamp=${startTimestamp}`;

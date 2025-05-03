@@ -3,7 +3,17 @@ import { sendWelcomeEmail } from '../../utils/emailService';
 
 // In a real app, you would use a database to store user registrations
 // This is a simple in-memory store for demonstration purposes
-const registrations: Map<string, string> = new Map();
+export const registrations: Map<string, string> = new Map();
+
+// For development, add your wallet if you have a Gmail account configured
+if (process.env.GMAIL_ACCOUNT) {
+  // This ensures your wallet is always registered during development
+  // You can replace this with your actual wallet address
+  if (process.env.WALLET_ADDRESS) {
+    registrations.set(process.env.WALLET_ADDRESS.toLowerCase(), process.env.GMAIL_ACCOUNT);
+    console.log(`Auto-registered wallet ${process.env.WALLET_ADDRESS} with email ${process.env.GMAIL_ACCOUNT}`);
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
