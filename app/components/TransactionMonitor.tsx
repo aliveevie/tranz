@@ -114,12 +114,28 @@ export default function TransactionMonitor() {
                   console.warn(`Could not get full details for transaction ${tx.hash}:`, err);
                 }
                 
+                // Get block timestamp if not available in metadata
+                let timestamp = Date.now() / 1000; // Default to current time
+                
+                if (tx.blockNum) {
+                  try {
+                    // Try to get block information to get timestamp
+                    const blockInfo = await alchemy.core.getBlock(tx.blockNum);
+                    if (blockInfo && blockInfo.timestamp) {
+                      // Convert block timestamp to seconds
+                      timestamp = Number(blockInfo.timestamp);
+                    }
+                  } catch (err) {
+                    console.warn(`Could not get block timestamp for block ${tx.blockNum}:`, err);
+                  }
+                }
+                
                 userTransactions.push({
                   hash: tx.hash,
                   from: tx.from,
                   to: tx.to || null,
                   value: tx.value?.toString() || '0',
-                  timestamp: tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() / 1000 : Date.now() / 1000,
+                  timestamp: timestamp,
                   type: 'sent',
                   blockNumber: parseInt(tx.blockNum || '0', 16),
                   method: txDetails?.data && txDetails.data !== '0x' ? 'Contract Interaction' : 'Transfer',
@@ -128,7 +144,7 @@ export default function TransactionMonitor() {
                 });
                 
                 // Send notification for this transaction if it's recent (last hour)
-                const isRecent = (Date.now() / 1000) - (tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() / 1000 : 0) < 3600;
+                const isRecent = (Date.now() / 1000) - timestamp < 3600;
                 if (isRecent) {
                   console.log(`Recent transaction detected: ${tx.hash}, sending notification...`);
                   // Notify about this transaction
@@ -145,7 +161,7 @@ export default function TransactionMonitor() {
                         to: tx.to || null,
                         value: tx.value?.toString() || '0',
                         blockNumber: parseInt(tx.blockNum || '0', 16),
-                        timestamp: tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() : Date.now(),
+                        timestamp: timestamp * 1000,
                         type: 'sent',
                         status: 'confirmed',
                       },
@@ -199,12 +215,28 @@ export default function TransactionMonitor() {
                   console.warn(`Could not get full details for transaction ${tx.hash}:`, err);
                 }
                 
+                // Get block timestamp if not available in metadata
+                let timestamp = Date.now() / 1000; // Default to current time
+                
+                if (tx.blockNum) {
+                  try {
+                    // Try to get block information to get timestamp
+                    const blockInfo = await alchemy.core.getBlock(tx.blockNum);
+                    if (blockInfo && blockInfo.timestamp) {
+                      // Convert block timestamp to seconds
+                      timestamp = Number(blockInfo.timestamp);
+                    }
+                  } catch (err) {
+                    console.warn(`Could not get block timestamp for block ${tx.blockNum}:`, err);
+                  }
+                }
+                
                 userTransactions.push({
                   hash: tx.hash,
                   from: tx.from,
                   to: tx.to || null,
                   value: tx.value?.toString() || '0',
-                  timestamp: tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() / 1000 : Date.now() / 1000,
+                  timestamp: timestamp,
                   type: 'received',
                   blockNumber: parseInt(tx.blockNum || '0', 16),
                   method: txDetails?.data && txDetails.data !== '0x' ? 'Contract Interaction' : 'Transfer',
@@ -213,7 +245,7 @@ export default function TransactionMonitor() {
                 });
                 
                 // Send notification for this transaction if it's recent (last hour)
-                const isRecent = (Date.now() / 1000) - (tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() / 1000 : 0) < 3600;
+                const isRecent = (Date.now() / 1000) - timestamp < 3600;
                 if (isRecent) {
                   console.log(`Recent transaction detected: ${tx.hash}, sending notification...`);
                   // Notify about this transaction
@@ -246,6 +278,25 @@ export default function TransactionMonitor() {
           console.error('Error fetching received transactions:', err);
         }
         
+        // Process transaction values and ensure timestamps are set correctly
+        for (const tx of userTransactions) {
+          // Make sure we're displaying the correct transaction value
+          if (tx.value && typeof tx.value === 'string' && tx.value.startsWith('0x')) {
+            try {
+              // For hex values, use formatEther
+              const ethValue = formatEther(BigInt(tx.value));
+              tx.value = ethValue;
+            } catch (err) {
+              console.warn(`Could not format hex value ${tx.value}:`, err);
+            }
+          }
+          
+          // Ensure timestamp is a valid number
+          if (!tx.timestamp || isNaN(tx.timestamp)) {
+            tx.timestamp = Date.now() / 1000; // Default to current time if invalid
+          }
+        }
+        
         // Sort transactions by timestamp (newest first)
         userTransactions.sort((a, b) => b.timestamp - a.timestamp);
         
@@ -262,10 +313,37 @@ export default function TransactionMonitor() {
     // Fetch immediately on mount
     fetchTransactions();
     
-    // Set up more frequent polling (every 15 seconds) to catch new transactions faster
-    const intervalId = setInterval(fetchTransactions, 15000);
+    // Set up more frequent polling (every 5 seconds) to catch new transactions faster
+    const intervalId = setInterval(fetchTransactions, 5000);
     
-    return () => clearInterval(intervalId);
+    // Also set up a listener for new blocks to trigger a refresh
+    let alchemyClient: Alchemy | null = null;
+    const setupBlockListener = async () => {
+      try {
+        alchemyClient = new Alchemy(alchemyConfig);
+        alchemyClient.ws.on(
+          AlchemySubscription.BLOCK,
+          (blockNumber) => {
+            // Only refresh on some blocks to avoid too many refreshes
+            if (blockNumber % 3 === 0) {
+              console.log(`New block detected (${blockNumber}), refreshing transactions...`);
+              fetchTransactions();
+            }
+          }
+        );
+      } catch (err) {
+        console.error('Error setting up block listener:', err);
+      }
+    };
+    
+    setupBlockListener();
+    
+    return () => {
+      clearInterval(intervalId);
+      if (alchemyClient) {
+        alchemyClient.ws.removeAllListeners();
+      }
+    };
   }, [address, isConnected, timeRange]);
 
   if (!isConnected) {
@@ -448,19 +526,19 @@ export default function TransactionMonitor() {
                           return `${parseFloat(formatEther(BigInt(tx.value))).toFixed(6)} ETH`;
                         }
                         
-                        // If value is a plain number or string number
+                        // If value is a number or can be parsed as one
                         const numValue = Number(tx.value);
                         if (!isNaN(numValue)) {
-                          // If it's a very large number, assume it's in wei
-                          if (numValue > 1e10) {
-                            return `${parseFloat(formatEther(BigInt(Math.floor(numValue)))).toFixed(6)} ETH`;
-                          }
-                          // Otherwise assume it's already in ETH
                           return `${numValue.toFixed(6)} ETH`;
                         }
                         
+                        // If value is a hex string
+                        if (typeof tx.value === 'string' && tx.value.startsWith('0x')) {
+                          return `${parseFloat(formatEther(BigInt(tx.value))).toFixed(6)} ETH`;
+                        }
+                        
                         // Fallback
-                        return `${tx.value.toString()} ETH`;
+                        return `${tx.value || '0.000000'} ETH`;
                       } catch (err) {
                         console.warn('Error formatting transaction value:', err, tx.value);
                         return '0.000000 ETH';
