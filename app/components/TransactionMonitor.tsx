@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useAccount, useBalance } from 'wagmi';
 import { formatEther } from 'viem';
 import { baseSepolia } from 'viem/chains';
+import { Alchemy } from 'alchemy-sdk';
+import { alchemyConfig } from '../config/alchemy';
 
 interface BlockscoutTransaction {
   hash: string;
@@ -70,101 +72,178 @@ export default function TransactionMonitor() {
           startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
         }
         
-        // Format dates for API
-        const startDateStr = startDate.toISOString();
+        // Initialize Alchemy client
+        const alchemy = new Alchemy(alchemyConfig);
+        console.log(`Fetching transactions for ${address} using Alchemy API`);
         
-        // Use our proxy API route to avoid CORS issues
-        const proxyUrl = `/api/blockscout/transactions?address=${address}&start_timestamp=${startDateStr}&_=${Date.now()}`;
-        
-        console.log(`Fetching transactions from ${proxyUrl}`);
-        
-        // Fetch transactions from our proxy API with cache busting
-        const response = await fetch(proxyUrl, {
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error(`API request failed with status ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        if (!data.items || !Array.isArray(data.items)) {
-          throw new Error('Invalid response format from API');
-        }
-        
-        console.log(`Received ${data.items.length} transactions from API`);
-        
-        // Transform Blockscout transactions to our format with proper error handling
+        // Transform Alchemy transactions to our format
         const userTransactions: Transaction[] = [];
         
-        // Ensure data.items exists and is an array
-        if (data.items && Array.isArray(data.items)) {
-          // Process each transaction with careful null checking
-          data.items.forEach((tx: BlockscoutTransaction) => {
-            try {
-              // Skip invalid transactions
-              if (!tx || !tx.hash || !tx.from || !tx.from.hash) {
-                console.warn('Skipping invalid transaction:', tx);
-                return;
-              }
-              
-              const isSender = tx.from.hash.toLowerCase() === address.toLowerCase();
-              const isReceiver = tx.to && tx.to.hash && tx.to.hash.toLowerCase() === address.toLowerCase();
-              
-              if (!isSender && !isReceiver) {
-                console.warn('Skipping transaction not related to user:', tx.hash);
-                return;
-              }
-              
-              userTransactions.push({
-                hash: tx.hash,
-                from: tx.from.hash,
-                to: tx.to ? tx.to.hash : null,
-                value: tx.value || '0',
-                timestamp: tx.timestamp ? new Date(tx.timestamp).getTime() / 1000 : Date.now() / 1000,
-                type: isSender ? 'sent' : 'received',
-                blockNumber: tx.block || 0,
-                method: tx.method || 'Transfer',
-                status: tx.status || 'unknown',
-                fee: tx.fee && tx.fee.value ? tx.fee.value : '0'
-              });
-              
-              // Send notification for this transaction if it's recent (last hour)
-              const isRecent = (Date.now() / 1000) - (tx.timestamp ? new Date(tx.timestamp).getTime() / 1000 : 0) < 3600;
-              if (isRecent) {
-                console.log(`Recent transaction detected: ${tx.hash}, sending notification...`);
-                // Notify about this transaction
-                fetch('/api/notify', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    walletAddress: address,
-                    transaction: {
-                      hash: tx.hash,
-                      from: tx.from.hash,
-                      to: tx.to ? tx.to.hash : null,
-                      value: tx.value || '0',
-                      blockNumber: tx.block || 0,
-                      timestamp: tx.timestamp ? new Date(tx.timestamp).getTime() : Date.now(),
-                      type: isSender ? 'sent' : 'received',
-                      status: 'confirmed',
-                    },
-                  }),
-                }).catch(err => console.error('Failed to send notification:', err));
-              }
-            } catch (err) {
-              console.error('Error processing transaction:', err, tx);
-            }
+        try {
+          // Get transactions from Alchemy (sent transactions)
+          const alchemyTransactions = await alchemy.core.getAssetTransfers({
+            fromBlock: "0x0",
+            toBlock: "latest",
+            fromAddress: address,
+            category: ["external", "erc20", "erc721", "erc1155"], // Removed 'internal' as it's not supported on Base Sepolia
+            maxCount: 100,
+            excludeZeroValue: false,
           });
-        } else {
-          console.warn('No valid transactions found in API response');
+          
+          console.log(`Received ${alchemyTransactions.transfers.length} sent transactions from Alchemy`);
+          console.log('Processing sent transactions:', alchemyTransactions.transfers);
+          
+          // Process sent transactions
+          if (alchemyTransactions.transfers && alchemyTransactions.transfers.length > 0) {
+            for (const tx of alchemyTransactions.transfers) {
+              try {
+                console.log('Processing sent transaction:', tx);
+                
+                // Skip transactions outside our time range
+                if (tx.metadata && tx.metadata.blockTimestamp) {
+                  const txTime = new Date(tx.metadata.blockTimestamp).getTime() / 1000;
+                  const startTime = startDate.getTime() / 1000;
+                  if (txTime < startTime) continue;
+                }
+                
+                // Get full transaction details
+                let txDetails;
+                try {
+                  txDetails = await alchemy.core.getTransaction(tx.hash);
+                } catch (err) {
+                  console.warn(`Could not get full details for transaction ${tx.hash}:`, err);
+                }
+                
+                userTransactions.push({
+                  hash: tx.hash,
+                  from: tx.from,
+                  to: tx.to || null,
+                  value: tx.value?.toString() || '0',
+                  timestamp: tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() / 1000 : Date.now() / 1000,
+                  type: 'sent',
+                  blockNumber: parseInt(tx.blockNum || '0', 16),
+                  method: txDetails?.data && txDetails.data !== '0x' ? 'Contract Interaction' : 'Transfer',
+                  status: 'confirmed',
+                  fee: '0' // We don't have fee information from this API
+                });
+                
+                // Send notification for this transaction if it's recent (last hour)
+                const isRecent = (Date.now() / 1000) - (tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() / 1000 : 0) < 3600;
+                if (isRecent) {
+                  console.log(`Recent transaction detected: ${tx.hash}, sending notification...`);
+                  // Notify about this transaction
+                  fetch('/api/notify', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      walletAddress: address,
+                      transaction: {
+                        hash: tx.hash,
+                        from: tx.from,
+                        to: tx.to || null,
+                        value: tx.value?.toString() || '0',
+                        blockNumber: parseInt(tx.blockNum || '0', 16),
+                        timestamp: tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() : Date.now(),
+                        type: 'sent',
+                        status: 'confirmed',
+                      },
+                    }),
+                  }).catch(err => console.error('Failed to send notification:', err));
+                }
+              } catch (err) {
+                console.error('Error processing sent transaction:', err);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching sent transactions:', err);
+        }
+        
+        try {
+          // Get transactions received by this address
+          const receivedTransactions = await alchemy.core.getAssetTransfers({
+            fromBlock: "0x0",
+            toBlock: "latest",
+            toAddress: address,
+            category: ["external", "erc20", "erc721", "erc1155"], // Removed 'internal' as it's not supported on Base Sepolia
+            maxCount: 100,
+            excludeZeroValue: false,
+          });
+          
+          console.log(`Received ${receivedTransactions.transfers.length} received transactions from Alchemy`);
+          console.log('Processing received transactions:', receivedTransactions.transfers);
+          
+          // Process received transactions
+          if (receivedTransactions.transfers && receivedTransactions.transfers.length > 0) {
+            for (const tx of receivedTransactions.transfers) {
+              try {
+                console.log('Processing received transaction:', tx);
+                
+                // Skip transactions outside our time range
+                if (tx.metadata && tx.metadata.blockTimestamp) {
+                  const txTime = new Date(tx.metadata.blockTimestamp).getTime() / 1000;
+                  const startTime = startDate.getTime() / 1000;
+                  if (txTime < startTime) continue;
+                }
+                
+                // Skip if we already processed this transaction (might be in both sent and received)
+                if (userTransactions.some(t => t.hash === tx.hash)) continue;
+                
+                // Get full transaction details
+                let txDetails;
+                try {
+                  txDetails = await alchemy.core.getTransaction(tx.hash);
+                } catch (err) {
+                  console.warn(`Could not get full details for transaction ${tx.hash}:`, err);
+                }
+                
+                userTransactions.push({
+                  hash: tx.hash,
+                  from: tx.from,
+                  to: tx.to || null,
+                  value: tx.value?.toString() || '0',
+                  timestamp: tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() / 1000 : Date.now() / 1000,
+                  type: 'received',
+                  blockNumber: parseInt(tx.blockNum || '0', 16),
+                  method: txDetails?.data && txDetails.data !== '0x' ? 'Contract Interaction' : 'Transfer',
+                  status: 'confirmed',
+                  fee: '0' // We don't have fee information from this API
+                });
+                
+                // Send notification for this transaction if it's recent (last hour)
+                const isRecent = (Date.now() / 1000) - (tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() / 1000 : 0) < 3600;
+                if (isRecent) {
+                  console.log(`Recent transaction detected: ${tx.hash}, sending notification...`);
+                  // Notify about this transaction
+                  fetch('/api/notify', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      walletAddress: address,
+                      transaction: {
+                        hash: tx.hash,
+                        from: tx.from,
+                        to: tx.to || null,
+                        value: tx.value?.toString() || '0',
+                        blockNumber: parseInt(tx.blockNum || '0', 16),
+                        timestamp: tx.metadata && tx.metadata.blockTimestamp ? new Date(tx.metadata.blockTimestamp).getTime() : Date.now(),
+                        type: 'received',
+                        status: 'confirmed',
+                      },
+                    }),
+                  }).catch(err => console.error('Failed to send notification:', err));
+                }
+              } catch (err) {
+                console.error('Error processing received transaction:', err);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching received transactions:', err);
         }
         
         // Sort transactions by timestamp (newest first)
@@ -224,12 +303,12 @@ export default function TransactionMonitor() {
               <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                 {address && (
                   <a 
-                    href={`https://base-sepolia.blockscout.com/address/${address}`}
+                    href={`https://sepolia.basescan.org/address/${address}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-blue-600 hover:text-blue-800 dark:text-blue-400 hover:underline"
                   >
-                    View on Blockscout
+                    View on BaseScan
                   </a>
                 )}
               </p>
@@ -342,7 +421,7 @@ export default function TransactionMonitor() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     <a 
-                      href={`https://base-sepolia.blockscout.com/tx/${tx.hash}`} 
+                      href={`https://sepolia.basescan.org/tx/${tx.hash}`} 
                       target="_blank" 
                       rel="noopener noreferrer"
                       className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 transition"
@@ -359,7 +438,16 @@ export default function TransactionMonitor() {
                     }
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                    {parseFloat(formatEther(BigInt(tx.value || '0'))).toFixed(6)}
+                    {(() => {
+                      try {
+                        // Remove any decimal points or non-numeric characters before converting to BigInt
+                        const cleanValue = tx.value ? tx.value.toString().split('.')[0] : '0';
+                        return parseFloat(formatEther(BigInt(cleanValue))).toFixed(6);
+                      } catch (err) {
+                        console.warn('Error formatting transaction value:', err);
+                        return '0.000000';
+                      }
+                    })()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {new Date(tx.timestamp * 1000).toLocaleString()}
@@ -367,7 +455,7 @@ export default function TransactionMonitor() {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {tx.blockNumber ? (
                       <a 
-                        href={`https://base-sepolia.blockscout.com/block/${tx.blockNumber}`} 
+                        href={`https://sepolia.basescan.org/block/${tx.blockNumber}`} 
                         target="_blank" 
                         rel="noopener noreferrer"
                         className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 transition"

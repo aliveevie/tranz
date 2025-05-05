@@ -11,6 +11,7 @@
   "dependencies": {
     "@coinbase/onchainkit": "latest",
     "@tanstack/react-query": "^5",
+    "alchemy-sdk": "^3.5.8",
     "next": "14.2.15",
     "nodemailer": "^6.10.1",
     "react": "^18",

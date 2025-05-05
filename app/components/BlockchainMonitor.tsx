@@ -4,11 +4,14 @@ import { useEffect, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { createPublicClient, webSocket, http, parseEther } from 'viem';
 import { baseSepolia } from 'viem/chains';
+import { Alchemy, AlchemySubscription } from 'alchemy-sdk';
+import { alchemyConfig } from '../config/alchemy';
 
 export default function BlockchainMonitor() {
   const { address, isConnected } = useAccount();
   const [pendingTxs, setPendingTxs] = useState<Set<string>>(new Set());
   const [confirmedTxs, setConfirmedTxs] = useState<Set<string>>(new Set());
+  const [alchemy, setAlchemy] = useState<Alchemy | null>(null);
 
   useEffect(() => {
     if (!isConnected || !address) return;
@@ -37,41 +40,15 @@ export default function BlockchainMonitor() {
       });
     }
 
-    // Try multiple RPC endpoints for better reliability
-    const endpoints = [
-      'https://sepolia.base.org',
-      'https://base-sepolia-rpc.publicnode.com',
-      'https://sepolia.base.meowrpc.com'
-    ];
-    
-    let transport;
-    try {
-      // Try WebSocket first
-      transport = webSocket('wss://sepolia.base.org');
-      console.log('Using WebSocket connection for real-time monitoring');
-    } catch (error) {
-      console.log('WebSocket not available, falling back to HTTP');
-      // Try multiple endpoints
-      for (const endpoint of endpoints) {
-        try {
-          transport = http(endpoint);
-          console.log(`Connected to ${endpoint}`);
-          break;
-        } catch (err) {
-          console.warn(`Failed to connect to ${endpoint}`);
-        }
-      }
-      
-      // If all endpoints fail, use the first one
-      if (!transport) {
-        transport = http(endpoints[0]);
-        console.log(`Fallback to ${endpoints[0]}`);
-      }
-    }
+    // Initialize Alchemy client
+    const alchemyClient = new Alchemy(alchemyConfig);
+    setAlchemy(alchemyClient);
+    console.log('Alchemy client initialized for real-time monitoring');
 
+    // Also keep the Viem client for some operations
     const publicClient = createPublicClient({
       chain: baseSepolia,
-      transport,
+      transport: http(alchemyConfig.rpcUrl),
     });
 
     // Function to send notification for transaction events
@@ -108,58 +85,54 @@ export default function BlockchainMonitor() {
       }
     };
 
-    // Watch for pending transactions
-    const unwatchPending = publicClient.watchPendingTransactions({
-      onTransactions: async (hashes) => {
-        for (const hash of hashes) {
-          try {
-            // Check if we've already processed this transaction
-            if (pendingTxs.has(hash) || confirmedTxs.has(hash)) continue;
-            
-            // Get transaction details
-            const tx = await publicClient.getTransaction({ hash });
-            
-            const isSender = tx.from.toLowerCase() === address.toLowerCase();
-            const isReceiver = tx.to?.toLowerCase() === address.toLowerCase();
-            
-            if (isSender || isReceiver) {
-              // Add to pending set
-              setPendingTxs(prev => new Set(prev).add(hash));
-              
-              // Notify about pending transaction
-              await notifyTransaction(tx, 'pending');
-            }
-          } catch (error) {
-            console.error(`Error processing pending transaction ${hash}:`, error);
-          }
-        }
-      },
-      onError: (error) => {
-        console.error('Error watching pending transactions:', error);
-      },
-    });
-
-    // Watch for confirmed transactions in blocks
-    const unwatchBlocks = publicClient.watchBlocks({
-      onBlock: async (block) => {
+    // Subscribe to pending transactions with Alchemy
+    const pendingTxsHandler = alchemyClient.ws.on(
+      AlchemySubscription.PENDING_TRANSACTIONS,
+      async (txHash) => {
         try {
-          // Get full block with transactions
-          const fullBlock = await publicClient.getBlock({
-            blockHash: block.hash,
-            includeTransactions: true,
-          });
+          // Check if we've already processed this transaction
+          if (pendingTxs.has(txHash) || confirmedTxs.has(txHash)) return;
           
-          if (!fullBlock.transactions) return;
+          // Get transaction details
+          const tx = await publicClient.getTransaction({ hash: txHash });
           
-          // Check if any transactions involve the user's address
-          for (const tx of fullBlock.transactions) {
-            if (typeof tx === 'string') continue; // Skip if tx is just a hash
+          const isSender = tx.from.toLowerCase() === address.toLowerCase();
+          const isReceiver = tx.to?.toLowerCase() === address.toLowerCase();
+          
+          if (isSender || isReceiver) {
+            console.log(`Detected pending transaction: ${txHash} (${isSender ? 'sent' : 'received'})`);
             
-            const txHash = tx.hash.toString();
+            // Add to pending set
+            setPendingTxs(prev => new Set(prev).add(txHash));
+            
+            // Notify about pending transaction immediately
+            await notifyTransaction(tx, 'pending');
+          }
+        } catch (error) {
+          console.error(`Error processing pending transaction ${txHash}:`, error);
+        }
+      }
+    );
+
+    // Subscribe to new blocks with Alchemy
+    const newBlocksHandler = alchemyClient.ws.on(
+      AlchemySubscription.BLOCK,
+      async (blockNumber) => {
+        try {
+          console.log(`New block detected: ${blockNumber}`);
+          
+          // Get the block with transactions
+          const block = await alchemyClient.core.getBlockWithTransactions(blockNumber);
+          
+          // Process each transaction in the block
+          for (const tx of block.transactions) {
+            const txHash = tx.hash;
             const isSender = tx.from.toLowerCase() === address.toLowerCase();
             const isReceiver = tx.to?.toLowerCase() === address.toLowerCase();
             
             if (isSender || isReceiver) {
+              console.log(`Found transaction in block ${blockNumber}: ${txHash} (${isSender ? 'sent' : 'received'})`);
+              
               // Check if this was a pending transaction
               const wasPending = pendingTxs.has(txHash);
               
@@ -172,22 +145,58 @@ export default function BlockchainMonitor() {
               });
               
               // Notify about confirmed transaction
-              await notifyTransaction(tx, 'confirmed', block.number.toString());
+              await notifyTransaction(tx, 'confirmed', blockNumber.toString());
             }
           }
         } catch (error) {
-          console.error('Error processing block:', error);
+          console.error(`Error processing block ${blockNumber}:`, error);
         }
+      }
+    );
+    
+    // Also set up a direct address activity subscription for more reliable monitoring
+    const addressActivityHandler = alchemyClient.ws.on(
+      {
+        method: AlchemySubscription.MINED_TRANSACTIONS,
+        addresses: [address],
+        includeRemoved: true,
       },
-      onError: (error) => {
-        console.error('Error watching blocks:', error);
-      },
-    });
+      async (tx) => {
+        try {
+          console.log(`Direct address activity detected: ${tx.transaction.hash}`);
+          
+          const txHash = tx.transaction.hash;
+          const isSender = tx.transaction.from.toLowerCase() === address.toLowerCase();
+          const isReceiver = tx.transaction.to?.toLowerCase() === address.toLowerCase();
+          
+          // If transaction was removed (e.g., chain reorganization)
+          if (tx.removed) {
+            console.log(`Transaction ${txHash} was removed from the chain`);
+            return;
+          }
+          
+          // Add to confirmed set and remove from pending
+          setConfirmedTxs(prev => new Set(prev).add(txHash));
+          setPendingTxs(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(txHash);
+            return newSet;
+          });
+          
+          // Notify about confirmed transaction
+          await notifyTransaction(tx.transaction, 'confirmed', tx.transaction.blockNumber.toString());
+        } catch (error) {
+          console.error(`Error processing address activity: ${error}`);
+        }
+      }
+    );
     
     // Cleanup function
     return () => {
-      unwatchPending();
-      unwatchBlocks();
+      // Clean up all Alchemy WebSocket subscriptions
+      if (alchemyClient) {
+        alchemyClient.ws.removeAllListeners();
+      }
       console.log('Blockchain monitoring stopped');
     };
   }, [address, isConnected]);
