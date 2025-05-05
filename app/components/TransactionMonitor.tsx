@@ -440,12 +440,30 @@ export default function TransactionMonitor() {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {(() => {
                       try {
-                        // Remove any decimal points or non-numeric characters before converting to BigInt
-                        const cleanValue = tx.value ? tx.value.toString().split('.')[0] : '0';
-                        return parseFloat(formatEther(BigInt(cleanValue))).toFixed(6);
+                        // Handle different formats of value that might come from Alchemy API
+                        if (!tx.value) return '0.000000 ETH';
+                        
+                        // If value is in hex format (starts with 0x)
+                        if (typeof tx.value === 'string' && tx.value.startsWith('0x')) {
+                          return `${parseFloat(formatEther(BigInt(tx.value))).toFixed(6)} ETH`;
+                        }
+                        
+                        // If value is a plain number or string number
+                        const numValue = Number(tx.value);
+                        if (!isNaN(numValue)) {
+                          // If it's a very large number, assume it's in wei
+                          if (numValue > 1e10) {
+                            return `${parseFloat(formatEther(BigInt(Math.floor(numValue)))).toFixed(6)} ETH`;
+                          }
+                          // Otherwise assume it's already in ETH
+                          return `${numValue.toFixed(6)} ETH`;
+                        }
+                        
+                        // Fallback
+                        return `${tx.value.toString()} ETH`;
                       } catch (err) {
-                        console.warn('Error formatting transaction value:', err);
-                        return '0.000000';
+                        console.warn('Error formatting transaction value:', err, tx.value);
+                        return '0.000000 ETH';
                       }
                     })()}
                   </td>

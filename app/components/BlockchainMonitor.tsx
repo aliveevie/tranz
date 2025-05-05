@@ -1,5 +1,4 @@
 'use client';
-
 import { useEffect, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { createPublicClient, webSocket, http, parseEther } from 'viem';
@@ -100,7 +99,8 @@ export default function BlockchainMonitor() {
           const isReceiver = tx.to?.toLowerCase() === address.toLowerCase();
           
           if (isSender || isReceiver) {
-            console.log(`Detected pending transaction: ${txHash} (${isSender ? 'sent' : 'received'})`);
+            // Only log important events like pending transactions
+            console.log(`Pending transaction detected: ${txHash.substring(0, 10)}... (${isSender ? 'sent' : 'received'})`);
             
             // Add to pending set
             setPendingTxs(prev => new Set(prev).add(txHash));
@@ -119,7 +119,10 @@ export default function BlockchainMonitor() {
       AlchemySubscription.BLOCK,
       async (blockNumber) => {
         try {
-          console.log(`New block detected: ${blockNumber}`);
+          // Only log new blocks occasionally to reduce console spam
+          if (blockNumber % 10 === 0) {
+            console.log(`New block detected: ${blockNumber}`);
+          }
           
           // Get the block with transactions
           const block = await alchemyClient.core.getBlockWithTransactions(blockNumber);
@@ -131,7 +134,7 @@ export default function BlockchainMonitor() {
             const isReceiver = tx.to?.toLowerCase() === address.toLowerCase();
             
             if (isSender || isReceiver) {
-              console.log(`Found transaction in block ${blockNumber}: ${txHash} (${isSender ? 'sent' : 'received'})`);
+              console.log(`Confirmed transaction in block ${blockNumber}: ${txHash.substring(0, 10)}... (${isSender ? 'sent' : 'received'})`);
               
               // Check if this was a pending transaction
               const wasPending = pendingTxs.has(txHash);
@@ -153,8 +156,7 @@ export default function BlockchainMonitor() {
         }
       }
     );
-    
-    // Also set up a direct address activity subscription for more reliable monitoring
+        // Also set up a direct address activity subscription for more reliable monitoring
     const addressActivityHandler = alchemyClient.ws.on(
       {
         method: AlchemySubscription.MINED_TRANSACTIONS,
@@ -163,8 +165,7 @@ export default function BlockchainMonitor() {
       },
       async (tx) => {
         try {
-          console.log(`Direct address activity detected: ${tx.transaction.hash}`);
-          
+          // Only log important transaction events, not every activity
           const txHash = tx.transaction.hash;
           const isSender = tx.transaction.from.toLowerCase() === address.toLowerCase();
           const isReceiver = tx.transaction.to?.toLowerCase() === address.toLowerCase();
@@ -182,6 +183,11 @@ export default function BlockchainMonitor() {
             newSet.delete(txHash);
             return newSet;
           });
+          
+          // Log only when we're actually sending a notification
+          if (isSender || isReceiver) {
+            console.log(`Transaction confirmed: ${txHash} (${isSender ? 'sent' : 'received'})`);
+          }
           
           // Notify about confirmed transaction
           await notifyTransaction(tx.transaction, 'confirmed', tx.transaction.blockNumber.toString());
