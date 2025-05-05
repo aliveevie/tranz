@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendTransactionAlert } from '../../utils/emailService';
 import { registrations } from '../register/route';
+import { getEmailByWallet, recordNotification } from '../../utils/supabaseService';
 
 // Keep track of transactions we've already notified about to prevent duplicate emails
 const notifiedTransactions = new Set<string>();
@@ -26,8 +27,12 @@ export async function POST(request: NextRequest) {
     // For debugging
     console.log('Notification request received:', { walletAddress, transaction });
 
-    // Check if we have a registered email for this wallet
-    let email = registrations.get(walletAddress.toLowerCase());
+    // First check Supabase for the registered email
+    const userResult = await getEmailByWallet(walletAddress.toLowerCase());
+    
+    // Fallback to in-memory map for backward compatibility
+    let email = userResult.success ? userResult.email : registrations.get(walletAddress.toLowerCase());
+    let userId = userResult.success ? userResult.userId : null;
     
     // For testing purposes, if no registration exists but we have a Gmail account,
     // use that to ensure notifications work during development
@@ -43,29 +48,53 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Determine transaction type and status
+    const transactionType = transaction.from?.toLowerCase() === walletAddress.toLowerCase() ? 'sent' : 'received';
+    const transactionStatus = transaction.status || 'unknown';
+    
     // Create a unique identifier for this transaction event
     // This helps prevent duplicate notifications for the same state
-    const txEventId = `${transaction.hash}-${transaction.status || 'unknown'}`;
+    const txEventId = `${transaction.hash}-${transactionStatus}`;
     
     // Check if we've already sent a notification for this exact transaction state
-    if (notifiedTransactions.has(txEventId)) {
+    // First check in Supabase if we have a user ID
+    let isDuplicate = false;
+    
+    if (userId) {
+      // Check in Supabase for duplicate notification
+      const notificationResult = await recordNotification(
+        userId,
+        transaction.hash,
+        transactionType,
+        transactionStatus
+      );
+      
+      isDuplicate = !notificationResult.success && notificationResult.isDuplicate === true;
+    } else {
+      // Fallback to in-memory check for backward compatibility
+      isDuplicate = notifiedTransactions.has(txEventId);
+      
+      if (!isDuplicate) {
+        // Add to notified set before sending to prevent duplicates even if sending fails
+        notifiedTransactions.add(txEventId);
+        
+        // Limit the size of the notified transactions set to prevent memory leaks
+        if (notifiedTransactions.size > 1000) {
+          // Keep only the most recent 500 transactions
+          const entries = Array.from(notifiedTransactions);
+          const toKeep = entries.slice(entries.length - 500);
+          notifiedTransactions.clear();
+          toKeep.forEach(entry => notifiedTransactions.add(entry));
+        }
+      }
+    }
+    
+    if (isDuplicate) {
       console.log(`Skipping duplicate notification for transaction: ${txEventId}`);
       return NextResponse.json(
         { message: 'Notification already sent for this transaction state' },
         { status: 200 }
       );
-    }
-    
-    // Add to notified set before sending to prevent duplicates even if sending fails
-    notifiedTransactions.add(txEventId);
-    
-    // Limit the size of the notified transactions set to prevent memory leaks
-    if (notifiedTransactions.size > 1000) {
-      // Keep only the most recent 500 transactions
-      const entries = Array.from(notifiedTransactions);
-      const toKeep = entries.slice(entries.length - 500);
-      notifiedTransactions.clear();
-      toKeep.forEach(entry => notifiedTransactions.add(entry));
     }
 
     // Send notification email
