@@ -116,14 +116,13 @@ export default function BlockchainMonitor() {
 
     // Subscribe to new blocks with Alchemy
     const newBlocksHandler = alchemyClient.ws.on(
-      AlchemySubscription.BLOCK,
+      'block', // Use the standard 'block' event instead of AlchemySubscription.BLOCK
       async (blockNumber) => {
         try {
           // Only log new blocks occasionally to reduce console spam
           if (blockNumber % 10 === 0) {
             console.log(`New block detected: ${blockNumber}`);
-          }
-          
+          } 
           // Get the block with transactions
           const block = await alchemyClient.core.getBlockWithTransactions(blockNumber);
           
@@ -160,7 +159,7 @@ export default function BlockchainMonitor() {
     const addressActivityHandler = alchemyClient.ws.on(
       {
         method: AlchemySubscription.MINED_TRANSACTIONS,
-        addresses: [address],
+        addresses: [{ to: address.toLowerCase(), from: address.toLowerCase() }], // Use correct object format for AlchemyMinedTransactionsAddress
         includeRemoved: true,
       },
       async (tx) => {
