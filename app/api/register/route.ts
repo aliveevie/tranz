@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendWelcomeEmail } from '../../utils/emailService';
-import { registerUserEmail, getUserByWallet } from '../../utils/supabaseService';
+import { registerUserEmail } from '../../utils/supabaseService';
 import { supabase } from '../../utils/supabase';
 
 // For backward compatibility - will be removed after migration
@@ -80,6 +80,19 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           { message: 'This email is already registered' },
           { status: 400 }
+        );
+      }
+      
+      // If the database is not set up properly, return a specific error
+      if (result.message && result.message.includes('Database not set up properly')) {
+        console.error('Database not set up properly:', result.error);
+        return NextResponse.json(
+          { 
+            message: 'The database is not set up properly. Please run the SQL setup script in the Supabase dashboard.',
+            setupInstructions: 'Go to https://app.supabase.com/project/_/sql and run the SQL script from scripts/supabase-tables.sql',
+            error: result.error
+          },
+          { status: 500 }
         );
       }
       

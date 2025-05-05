@@ -6,32 +6,67 @@ import { createUser, getUserByWallet, getUserByEmail, createNotificationRecord, 
 export async function registerUserEmail(email: string, walletAddress: string) {
   try {
     // Check if user already exists by wallet
-    const existingUserByWallet = await getUserByWallet(walletAddress);
-    if (existingUserByWallet) {
+    const existingUserByWalletResult = await getUserByWallet(walletAddress);
+    
+    // Handle database not set up properly
+    if (!existingUserByWalletResult.success && existingUserByWalletResult.message === 'Database not set up properly') {
+      return {
+        success: false,
+        message: 'Database not set up properly. Please run the SQL setup script in the Supabase dashboard.',
+        error: existingUserByWalletResult.error
+      };
+    }
+    
+    // Handle user already exists
+    if (existingUserByWalletResult.success) {
       return {
         success: false,
         message: 'Wallet address already registered',
-        data: existingUserByWallet
+        data: existingUserByWalletResult.data
       };
     }
 
     // Check if user already exists by email
-    const existingUserByEmail = await getUserByEmail(email);
-    if (existingUserByEmail) {
+    const existingUserByEmailResult = await getUserByEmail(email);
+    
+    // Handle database not set up properly (redundant check, but just to be safe)
+    if (!existingUserByEmailResult.success && existingUserByEmailResult.message === 'Database not set up properly') {
+      return {
+        success: false,
+        message: 'Database not set up properly. Please run the SQL setup script in the Supabase dashboard.',
+        error: existingUserByEmailResult.error
+      };
+    }
+    
+    // Handle user already exists
+    if (existingUserByEmailResult.success) {
       return {
         success: false,
         message: 'Email already registered',
-        data: existingUserByEmail
+        data: existingUserByEmailResult.data
       };
     }
 
     // Create new user
-    const newUser = await createUser(email, walletAddress);
-    return {
-      success: true,
-      message: 'Registration successful',
-      data: newUser
-    };
+    try {
+      const newUser = await createUser(email, walletAddress);
+      return {
+        success: true,
+        message: 'Registration successful',
+        data: newUser
+      };
+    } catch (error: any) {
+      // Check if the error is because the table doesn't exist
+      if (error.code === '42P01') {
+        return {
+          success: false,
+          message: 'Database not set up properly. Please run the SQL setup script in the Supabase dashboard.',
+          error
+        };
+      }
+      
+      throw error; // Re-throw other errors to be caught by the outer try/catch
+    }
   } catch (error) {
     console.error('Error registering user:', error);
     return {
@@ -47,19 +82,11 @@ export async function registerUserEmail(email: string, walletAddress: string) {
  */
 export async function getEmailByWallet(walletAddress: string) {
   try {
-    const user = await getUserByWallet(walletAddress);
-    if (!user) {
-      return {
-        success: false,
-        message: 'User not found'
-      };
-    }
-
-    return {
-      success: true,
-      email: user.email,
-      userId: user.id
-    };
+    // getUserByWallet now returns a result object with success/error info
+    const result = await getUserByWallet(walletAddress);
+    
+    // Just pass through the result from getUserByWallet
+    return result;
   } catch (error) {
     console.error('Error getting email by wallet:', error);
     return {

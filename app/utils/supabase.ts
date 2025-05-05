@@ -75,33 +75,119 @@ export async function createUser(email: string, walletAddress: string) {
 }
 
 export async function getUserByWallet(walletAddress: string) {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('wallet_address', walletAddress.toLowerCase())
-    .single();
-  
-  if (error && error.code !== 'PGRST116') { // PGRST116 is the "not found" error code
-    console.error('Error fetching user:', error);
-    throw error;
+  try {
+    // First check if the users table exists by trying a simple query
+    const { error: tableCheckError } = await supabase
+      .from('users')
+      .select('count', { count: 'exact', head: true });
+    
+    // If the table doesn't exist, return a failure response
+    if (tableCheckError && tableCheckError.code === '42P01') { // 42P01 is the "relation does not exist" error code
+      console.error('Users table does not exist:', tableCheckError);
+      return {
+        success: false,
+        message: 'Database not set up properly',
+        error: tableCheckError
+      };
+    }
+    
+    // If the table exists, proceed with the query
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('wallet_address', walletAddress.toLowerCase())
+      .single();
+    
+    if (error) {
+      if (error.code === 'PGRST116') { // PGRST116 is the "not found" error code
+        return {
+          success: false,
+          message: 'User not found',
+          error: null
+        };
+      }
+      
+      console.error('Error fetching user:', error);
+      return {
+        success: false,
+        message: 'Error fetching user',
+        error
+      };
+    }
+    
+    return {
+      success: true,
+      message: 'User found',
+      data,
+      userId: data.id,
+      email: data.email
+    };
+  } catch (error) {
+    console.error('Unexpected error in getUserByWallet:', error);
+    return {
+      success: false,
+      message: 'Unexpected error',
+      error
+    };
   }
-  
-  return data;
 }
 
 export async function getUserByEmail(email: string) {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('email', email.toLowerCase())
-    .single();
-  
-  if (error && error.code !== 'PGRST116') {
-    console.error('Error fetching user:', error);
-    throw error;
+  try {
+    // First check if the users table exists by trying a simple query
+    const { error: tableCheckError } = await supabase
+      .from('users')
+      .select('count', { count: 'exact', head: true });
+    
+    // If the table doesn't exist, return a failure response
+    if (tableCheckError && tableCheckError.code === '42P01') { // 42P01 is the "relation does not exist" error code
+      console.error('Users table does not exist:', tableCheckError);
+      return {
+        success: false,
+        message: 'Database not set up properly',
+        error: tableCheckError
+      };
+    }
+    
+    // If the table exists, proceed with the query
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email.toLowerCase())
+      .single();
+    
+    if (error) {
+      if (error.code === 'PGRST116') { // PGRST116 is the "not found" error code
+        return {
+          success: false,
+          message: 'User not found',
+          error: null
+        };
+      }
+      
+      console.error('Error fetching user:', error);
+      return {
+        success: false,
+        message: 'Error fetching user',
+        error
+      };
+    }
+    
+    return {
+      success: true,
+      message: 'User found',
+      data,
+      userId: data.id,
+      email: data.email
+    };
+  } catch (error) {
+    console.error('Unexpected error in getUserByEmail:', error);
+    return {
+      success: false,
+      message: 'Unexpected error',
+      error
+    };
   }
-  
-  return data;
 }
 
 // Notification history operations
